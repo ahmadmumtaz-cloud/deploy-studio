@@ -1,0 +1,5 @@
+{
+  "name": "PyDeploy Studio AI",
+  "description": "A natural language to Python application generator. Build Flask web apps or CLI tools instantly using AI.",
+  "requestFramePermissions": []
+}
