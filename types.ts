@@ -22,3 +22,10 @@ export interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
 }
+
+export type GenerationMode = 'fast' | 'standard' | 'thinking';
+
+export interface ResearchResult {
+  text: string;
+  sources: Array<{ title: string; uri: string }>;
+}

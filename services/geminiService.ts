@@ -1,5 +1,5 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { GeneratedProject } from "../types";
+import { GoogleGenAI, Type, Schema, Modality } from "@google/genai";
+import { GeneratedProject, ResearchResult, GenerationMode } from "../types";
 
 const apiKey = process.env.API_KEY;
 
@@ -36,7 +36,7 @@ const projectSchema: Schema = {
   required: ["projectName", "files", "setupInstructions", "description"]
 };
 
-export const generatePythonApp = async (prompt: string): Promise<GeneratedProject> => {
+export const generatePythonApp = async (prompt: string, mode: GenerationMode = 'standard'): Promise<GeneratedProject> => {
   if (!apiKey) {
     throw new Error("API Key is missing. Please check your environment configuration.");
   }
@@ -58,16 +58,31 @@ export const generatePythonApp = async (prompt: string): Promise<GeneratedProjec
     If the user asks for a specific feature (e.g., "AI text summarizer"), mock the AI part using a simple function or suggest a real library like HuggingFace if simple enough, but prioritize running code.
   `;
 
+  let modelName = 'gemini-2.5-flash';
+  let config: any = {
+    systemInstruction: systemInstruction,
+    responseMimeType: "application/json",
+    responseSchema: projectSchema,
+    temperature: 0.2,
+  };
+
+  if (mode === 'fast') {
+    modelName = 'gemini-2.5-flash-lite';
+  } else if (mode === 'thinking') {
+    modelName = 'gemini-3-pro-preview';
+    config = {
+      ...config,
+      thinkingConfig: { thinkingBudget: 32768 },
+    };
+    // Note: maxOutputTokens should generally not be set when using thinkingConfig unless specifically managed, 
+    // but the prompt says "Do not set maxOutputTokens", so we omit it.
+  }
+
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash', // Fast and capable for code generation
+      model: modelName,
       contents: prompt,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: projectSchema,
-        temperature: 0.2, // Lower temperature for more deterministic code
-      },
+      config: config,
     });
 
     if (response.text) {
@@ -79,4 +94,77 @@ export const generatePythonApp = async (prompt: string): Promise<GeneratedProjec
     console.error("Gemini API Error:", error);
     throw error;
   }
+};
+
+export const researchTechStack = async (query: string): Promise<ResearchResult> => {
+  if (!apiKey) throw new Error("API Key missing");
+  const ai = new GoogleGenAI({ apiKey });
+
+  // Using gemini-2.5-flash with googleSearch as requested
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: `Find the best Python libraries and recent trends for: ${query}. Summarize concisely.`,
+    config: {
+      tools: [{ googleSearch: {} }],
+    },
+  });
+
+  const sources: Array<{ title: string; uri: string }> = [];
+  
+  if (response.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+    response.candidates[0].groundingMetadata.groundingChunks.forEach((chunk: any) => {
+      if (chunk.web) {
+        sources.push({
+          title: chunk.web.title || "Source",
+          uri: chunk.web.uri,
+        });
+      }
+    });
+  }
+
+  return {
+    text: response.text || "No results found.",
+    sources: sources,
+  };
+};
+
+export const generateSpeechInstructions = async (text: string): Promise<ArrayBuffer> => {
+  if (!apiKey) throw new Error("API Key missing");
+  const ai = new GoogleGenAI({ apiKey });
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash-preview-tts",
+    contents: [{ parts: [{ text: text }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Kore' },
+        },
+      },
+    },
+  });
+
+  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!base64Audio) throw new Error("No audio generated");
+
+  // Decode base64 to ArrayBuffer
+  const binaryString = atob(base64Audio);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
+
+// --- Live API Helpers ---
+
+// We export the class/functions needed for the component to handle the connection
+// Ideally, the connection logic resides in the component to manage WebSocket state, 
+// but we can expose a factory here.
+
+export const createLiveClient = () => {
+  if (!apiKey) throw new Error("API Key missing");
+  return new GoogleGenAI({ apiKey });
 };
